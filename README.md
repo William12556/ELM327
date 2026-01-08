@@ -18,8 +18,8 @@ Launches the emulator as 'ELM327-Emulator' Bluetooth device on `/dev/rfcomm0`.
 
 ## Dependencies
 
-- [python-OBD](https://github.com/brendan-w/python-OBD) - Python OBD-II interface
-- [ELM327-emulator](https://github.com/ircama/ELM327-emulator) - ELM327 protocol emulator
+- [python-OBD](https://github.com/brendan-w/python-OBD) - Python OBD-II interface (```https://github.com/brendan-w/python-OBD```)
+- [ELM327-emulator](https://github.com/ircama/ELM327-emulator) - ELM327 protocol emulator (```https://github.com/ircama/ELM327-emulator```)
 
 ## Copyright
 
