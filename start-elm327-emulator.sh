@@ -98,9 +98,12 @@ echo "Add the Serial Port Profile"
 sdptool add --channel=1 SP
 sleep 2
 
+# Set baud rate on rfcomm0 to match client expectation (38400)
+stty -F /dev/rfcomm0 38400
+
 # Start elm327 emulator - rfcomm watch runs in foreground, spawning elm on each connection
 echo "ELM327-emulator waiting for connections (foreground - use screen or tmux)"
-rfcomm watch /dev/rfcomm0 1 python3 -m elm -P /dev/rfcomm0 -l -s car -b /opt/elm327/elm.out -d
+rfcomm watch /dev/rfcomm0 1 bash -c 'stty -F /dev/rfcomm0 38400 && python3 -m elm -P /dev/rfcomm0 -l -s car -b /opt/elm327/elm.out -d'
 echo "The device should now be discoverable as 'ELM327-Emulator'"
 
 # Show current status
