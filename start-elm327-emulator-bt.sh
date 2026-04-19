@@ -4,28 +4,28 @@
 # Usage
 # =============================================================================
 #
-# Run this script on the Raspberry Pi to start the ELM327 emulator.
+# Starts the ELM327 emulator in Bluetooth SPP (RFCOMM) mode on the Raspberry Pi.
+# Use for Bluetooth SPP testing and Pi production environment validation.
 #
 # Prerequisites:
 #   - Run as root or with sudo
 #   - Bluetooth service must be available (bluetoothd)
 #   - python3-elm package must be installed
+#   - Client device must be paired after this script starts
 #
 # Steps:
 #   1. SSH into the Pi
-#   2. Run: sudo bash /opt/elm327/start-elm327-emulator.sh
-#   3. The script runs rfcomm watch in the foreground — use screen or tmux
-#      to keep it running after SSH disconnect:
-#        screen -S elm327 sudo bash /opt/elm327/start-elm327-emulator.sh
-#   4. Pair the client device (Mac) via Bluetooth settings
-#   5. Start GTach on the client
+#   2. Run: sudo bash /opt/elm327/start-elm327-emulator-bt.sh
+#   3. Pair the client device via Bluetooth settings
+#   4. Start GTach on the Pi with --transport rfcomm
 #
 # Notes:
-#   - rfcomm watch runs in the foreground and spawns elm on each connection
-#   - The emulator device name is set to 'ELM327-Emulator'
+#   - rfcomm watch runs in the foreground — use tmux to persist after SSH disconnect:
+#       tmux new -s elm327
+#       sudo bash /opt/elm327/start-elm327-emulator-bt.sh
 #   - SPP is registered on RFCOMM channel 1
-#   - Logs are written to /opt/elm327/elm.log
-#   - To stop: Ctrl+C (or kill the screen/tmux session)
+#   - Emulator logs written to /opt/elm327/elm.log
+#   - To stop: Ctrl+C
 #
 # =============================================================================
 
@@ -41,7 +41,6 @@ disable_existing_loggers: False
 formatters:
   compact:
     format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    #datefmt: '%H:%M:%S'
   spaced:
     format: '%(asctime)s  %(name)-10s %(funcName)-15s %(levelname)-8s %(message)s'
 
@@ -54,8 +53,8 @@ handlers:
         encoding: utf8
         maxBytes: 1000000
         backupCount: 2
-        mode: 'w' # default is a which means append
-        
+        mode: 'w'
+
     console:
         class: logging.StreamHandler
         level: INFO
@@ -69,18 +68,18 @@ root:
         - file
 EOL
 
-# First ensure the Bluetooth service is running and configured
+# Ensure Bluetooth service is running
 echo "Restart Bluetooth service"
 sudo service bluetooth restart
 sleep 2
 
-# Set name using multiple methods to ensure it takes effect
+# Set Bluetooth device name
 echo "Setting Bluetooth name..."
 sudo btmgmt name "ELM327-Emulator"
 sudo hciconfig hci0 name 'ELM327-Emulator'
 sleep 2
 
-# Release any existing connections
+# Release any existing RFCOMM connections
 echo "Release any existing rfcomm connections"
 sudo rfcomm release 0 2>/dev/null || true
 sleep 2
@@ -89,27 +88,15 @@ sleep 2
 echo "Ensure rfcomm device exists"
 if [ ! -e /dev/rfcomm0 ]; then
     sudo mknod -m 666 /dev/rfcomm0 c 216 0
-	sudo chown root:dialout /dev/rfcomm0
+    sudo chown root:dialout /dev/rfcomm0
 fi
 sleep 2
 
-# Add the Serial Port Profile
+# Register Serial Port Profile on channel 1
 echo "Add the Serial Port Profile"
 sdptool add --channel=1 SP
 sleep 2
 
-# Set baud rate on rfcomm0 to match client expectation (38400)
-stty -F /dev/rfcomm0 38400
-
-# Start elm327 emulator - rfcomm watch runs in foreground, spawning elm on each connection
-echo "ELM327-emulator waiting for connections (foreground - use screen or tmux)"
-rfcomm watch /dev/rfcomm0 1 bash -c 'stty -F /dev/rfcomm0 38400 && python3 -m elm -P /dev/rfcomm0 -l -s car -b /opt/elm327/elm.out -d'
-echo "The device should now be discoverable as 'ELM327-Emulator'"
-
-# Show current status
-echo "Current Bluetooth status:"
-bluetoothctl show
-
-# Show SP services
-echo "Current SP services:"
-sdptool browse local | grep -A 15 "Service Name: Serial Port"
+# Start emulator via rfcomm watch (foreground — spawns elm on each connection)
+echo "ELM327-emulator waiting for connections..."
+rfcomm watch /dev/rfcomm0 1 /opt/elm327/elm-start.sh
