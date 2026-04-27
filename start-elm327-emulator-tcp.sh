@@ -65,7 +65,7 @@ EOL
 
 # Start emulator in TCP daemon mode
 echo "Starting ELM327 emulator in TCP mode on port 35000..."
-cd /opt/elm327 && nohup python3 -m elm -s car -l -n 35000 &
+cd /opt/elm327 && nohup python3 -m elm -s car -n 35000 -d &
 sleep 1
 echo "ELM327 emulator started. TCP port 35000."
 echo "To stop: pkill -f 'python3 -m elm'"

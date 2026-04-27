@@ -97,6 +97,13 @@ echo "Add the Serial Port Profile"
 sdptool add --channel=1 SP
 sleep 2
 
+# Make adapter discoverable and pairable
+echo "Setting adapter discoverable and pairable..."
+sudo btmgmt connectable on
+sudo btmgmt pairable on
+sudo btmgmt discov on
+sleep 1
+
 # Start emulator via rfcomm watch (foreground — spawns elm on each connection)
 echo "ELM327-emulator waiting for connections..."
 rfcomm watch /dev/rfcomm0 1 /opt/elm327/elm-start.sh
