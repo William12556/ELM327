@@ -1,82 +1,106 @@
 #!/bin/bash
+#
+# install-elm327-emulator.sh
+#
+# Installs the ELM327 emulator with the Bluetooth RFCOMM bridge and registers
+# a systemd service so the stack starts automatically at boot.
+#
+# Idempotent: stops the running service, uninstalls prior pip packages, and
+# reinstalls from a clean state. Safe to re-run.
+#
+# Run on the target Pi (root or sudo):
+#   bash install-elm327-emulator.sh
+#
+# After installation, the emulator service starts on boot and is also
+# controllable manually:
+#   systemctl status  elm327-emulator
+#   systemctl start   elm327-emulator
+#   systemctl stop    elm327-emulator
+#   journalctl -u elm327-emulator -f
+#
 
-# Exit on error
 set -e
 
-echo "Installing ELM327-emulator and dependencies..."
+INSTALL_DIR=/opt/elm327
+SERVICE_NAME=elm327-emulator
+SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Update system
-sudo apt-get update
-sudo apt-get -y upgrade
+# Use sudo only if not already root
+if [[ $EUID -eq 0 ]]; then
+    SUDO=""
+else
+    SUDO="sudo"
+fi
 
-# Install required packages
-sudo apt-get install -y \
+echo "==> Stopping any running ${SERVICE_NAME} service..."
+${SUDO} systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
+${SUDO} pkill -f 'python3 -m elm' 2>/dev/null || true
+${SUDO} pkill -f 'bt-server.py'   2>/dev/null || true
+sleep 1
+
+echo "==> Installing system packages..."
+${SUDO} apt-get update
+${SUDO} apt-get install -y \
     python3 \
     python3-pip \
     bluez \
+    bluez-tools \
     git
 
-# Upgrade pip system-wide
-sudo python3 -m pip install --upgrade pip --break-system-packages
+echo "==> Uninstalling prior Python packages (if present)..."
+${SUDO} python3 -m pip uninstall -y --break-system-packages ELM327-emulator 2>/dev/null || true
+${SUDO} python3 -m pip uninstall -y --break-system-packages obd             2>/dev/null || true
 
-# Install python-OBD from GitHub system-wide
-sudo python3 -m pip install --upgrade git+https://github.com/brendan-w/python-OBD.git --break-system-packages
+echo "==> Installing build dependencies (setuptools<81, wheel)..."
+# ircama/ELM327-emulator's setup.py imports pkg_resources, which setuptools>=81
+# no longer provides. Pin setuptools<81 system-wide and install the emulator
+# with --no-build-isolation so the system setuptools is used at build time.
+${SUDO} python3 -m pip install --break-system-packages 'setuptools<81' wheel
 
-# Install ELM327-emulator from GitHub system-wide
-sudo python3 -m pip install git+https://github.com/ircama/ELM327-emulator --break-system-packages
+echo "==> Installing python-OBD..."
+${SUDO} python3 -m pip install --break-system-packages \
+    git+https://github.com/brendan-w/python-OBD.git
 
-# Configure Bluetooth
-sudo service bluetooth restart
+echo "==> Installing ELM327-emulator (no build isolation)..."
+${SUDO} python3 -m pip install --break-system-packages --no-build-isolation \
+    git+https://github.com/ircama/ELM327-emulator
 
-# Create RFCOMM device
-sudo mknod -m 666 /dev/rfcomm0 c 216 0
-sudo chown $USER /dev/rfcomm0
+echo "==> Installing runtime files to ${INSTALL_DIR}..."
+${SUDO} mkdir -p "${INSTALL_DIR}"
+${SUDO} cp "${SRC_DIR}/bt-server.py"                 "${INSTALL_DIR}/bt-server.py"
+${SUDO} cp "${SRC_DIR}/start-elm327-emulator-bt.sh"  "${INSTALL_DIR}/start-elm327-emulator-bt.sh"
+${SUDO} cp "${SRC_DIR}/start-elm327-emulator-tcp.sh" "${INSTALL_DIR}/start-elm327-emulator-tcp.sh"
+${SUDO} chmod 755 "${INSTALL_DIR}/start-elm327-emulator-bt.sh"
+${SUDO} chmod 755 "${INSTALL_DIR}/start-elm327-emulator-tcp.sh"
+${SUDO} chmod 644 "${INSTALL_DIR}/bt-server.py"
 
-# Add SP profile
-sdptool add --channel=1 SP
+echo "==> Installing bluetoothd --compat drop-in..."
+${SUDO} mkdir -p /etc/systemd/system/bluetooth.service.d
+${SUDO} cp "${SRC_DIR}/bluetoothd-compat.conf" \
+           /etc/systemd/system/bluetooth.service.d/compat.conf
 
-# Create directory for log configuration
-sudo mkdir -p /etc/elm327-emulator
+echo "==> Installing ${SERVICE_NAME}.service..."
+${SUDO} cp "${SRC_DIR}/${SERVICE_NAME}.service" \
+           "/etc/systemd/system/${SERVICE_NAME}.service"
 
-# Create basic logging configuration system-wide
-sudo tee /etc/elm327-emulator/elm.yaml << 'EOL'
-version: 1
-disable_existing_loggers: true
+echo "==> Reloading systemd and restarting bluetooth..."
+${SUDO} systemctl daemon-reload
+${SUDO} systemctl restart bluetooth
+sleep 2
 
-formatters:
-    standard:
-        format: '%(asctime)s [%(levelname)s] %(message)s'
-        datefmt: '%Y-%m-%d %H:%M:%S'
+echo "==> Enabling and starting ${SERVICE_NAME}.service..."
+${SUDO} systemctl enable "${SERVICE_NAME}.service"
+${SUDO} systemctl restart "${SERVICE_NAME}.service"
 
-handlers:
-    console:
-        class: logging.StreamHandler
-        level: INFO
-        formatter: standard
-        stream: ext://sys.stdout
-
-    file:
-        class: logging.handlers.RotatingFileHandler
-        level: INFO
-        formatter: standard
-        filename: /var/log/elm327-emulator/elm.log
-        maxBytes: 1048576
-        backupCount: 2
-
-loggers:
-    '':
-        level: INFO
-        handlers: [console, file]
-        propagate: no
-EOL
-
-# Create log directory with appropriate permissions
-sudo mkdir -p /var/log/elm327-emulator
-sudo chown $USER:$USER /var/log/elm327-emulator
-
-# Set environment variable for log config
-echo 'export ELM_LOG_CFG=/etc/elm327-emulator/elm.yaml' | sudo tee -a /etc/profile.d/elm327-emulator.sh
-
-echo "Installation complete!"
-echo "You can now use the start script to run ELM327-emulator"
-echo "Please log out and back in, or run 'source /etc/profile.d/elm327-emulator.sh' to use the emulator"
+echo
+echo "Installation complete."
+echo
+echo "Status:"
+${SUDO} systemctl status "${SERVICE_NAME}.service" --no-pager || true
+echo
+echo "Logs:"
+echo "  journalctl -u ${SERVICE_NAME} -f"
+echo "  tail -f ${INSTALL_DIR}/bt-server.log"
+echo "  tail -f ${INSTALL_DIR}/elm.log"
+echo
+echo "Pair the GTach Pi against this host once; thereafter, GTach can connect on RFCOMM channel 1."
