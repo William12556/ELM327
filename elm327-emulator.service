@@ -1,0 +1,19 @@
+[Unit]
+Description=ELM327 Emulator with Bluetooth RFCOMM bridge
+Documentation=https://github.com/William12556/ELM327
+Wants=bluetooth.service
+After=bluetooth.service network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/elm327/start-elm327-emulator-bt.sh
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
