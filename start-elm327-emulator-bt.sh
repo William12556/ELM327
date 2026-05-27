@@ -22,6 +22,10 @@
 # causes the emulator to self-terminate during log handler initialisation.
 # Emulator output is captured by systemd (journalctl -u elm327-emulator).
 #
+# NOTE: The emulator is started with --daemon to suppress the interactive
+# command console. Without --daemon, EOF on stdin (backgrounded process)
+# causes immediate self-termination.
+#
 
 INSTALL_DIR=/opt/elm327
 BT_NAME="ELM327-Emulator"
@@ -94,11 +98,12 @@ else
     log "WARNING: sdptool failed; SDP record not advertised (non-fatal for GTach)"
 fi
 
-# Launch ELM327 emulator (TCP 35000)
-# ELM_LOG_CFG is deliberately unset; see file header note.
+# Launch ELM327 emulator in daemon mode.
+# --daemon suppresses the interactive console; without it, EOF on stdin
+# (backgrounded/systemd process) causes immediate self-termination.
 log "Starting ELM327 emulator on TCP port ${ELM_TCP_PORT}..."
 cd "${INSTALL_DIR}"
-python3 -m elm -s car -n "${ELM_TCP_PORT}" &
+python3 -m elm --daemon -s car -n "${ELM_TCP_PORT}" &
 ELM_PID=$!
 log "  ELM327 emulator PID: ${ELM_PID}"
 
