@@ -38,6 +38,10 @@ ${SUDO} pkill -f 'python3 -m elm' 2>/dev/null || true
 ${SUDO} pkill -f 'bt-server.py'   2>/dev/null || true
 sleep 1
 
+echo "==> Removing any prior bluetoothd drop-in (legacy compat mode no longer used)..."
+${SUDO} rm -f /etc/systemd/system/bluetooth.service.d/compat.conf
+${SUDO} rmdir /etc/systemd/system/bluetooth.service.d 2>/dev/null || true
+
 echo "==> Installing system packages..."
 ${SUDO} apt-get update
 ${SUDO} apt-get install -y \
@@ -67,17 +71,14 @@ ${SUDO} python3 -m pip install --break-system-packages --no-build-isolation \
 
 echo "==> Installing runtime files to ${INSTALL_DIR}..."
 ${SUDO} mkdir -p "${INSTALL_DIR}"
-${SUDO} cp "${SRC_DIR}/bt-server.py"                 "${INSTALL_DIR}/bt-server.py"
-${SUDO} cp "${SRC_DIR}/start-elm327-emulator-bt.sh"  "${INSTALL_DIR}/start-elm327-emulator-bt.sh"
-${SUDO} cp "${SRC_DIR}/start-elm327-emulator-tcp.sh" "${INSTALL_DIR}/start-elm327-emulator-tcp.sh"
+${SUDO} cp "${SRC_DIR}/bt-server.py"                  "${INSTALL_DIR}/bt-server.py"
+${SUDO} cp "${SRC_DIR}/start-elm327-emulator-bt.sh"   "${INSTALL_DIR}/start-elm327-emulator-bt.sh"
+${SUDO} cp "${SRC_DIR}/start-elm327-emulator-tcp.sh"  "${INSTALL_DIR}/start-elm327-emulator-tcp.sh"
+${SUDO} cp "${SRC_DIR}/status-elm327-emulator.sh"     "${INSTALL_DIR}/status-elm327-emulator.sh"
 ${SUDO} chmod 755 "${INSTALL_DIR}/start-elm327-emulator-bt.sh"
 ${SUDO} chmod 755 "${INSTALL_DIR}/start-elm327-emulator-tcp.sh"
+${SUDO} chmod 755 "${INSTALL_DIR}/status-elm327-emulator.sh"
 ${SUDO} chmod 644 "${INSTALL_DIR}/bt-server.py"
-
-echo "==> Installing bluetoothd --compat drop-in..."
-${SUDO} mkdir -p /etc/systemd/system/bluetooth.service.d
-${SUDO} cp "${SRC_DIR}/bluetoothd-compat.conf" \
-           /etc/systemd/system/bluetooth.service.d/compat.conf
 
 echo "==> Installing ${SERVICE_NAME}.service..."
 ${SUDO} cp "${SRC_DIR}/${SERVICE_NAME}.service" \
@@ -96,11 +97,4 @@ echo
 echo "Installation complete."
 echo
 echo "Status:"
-${SUDO} systemctl status "${SERVICE_NAME}.service" --no-pager || true
-echo
-echo "Logs:"
-echo "  journalctl -u ${SERVICE_NAME} -f"
-echo "  tail -f ${INSTALL_DIR}/bt-server.log"
-echo "  tail -f ${INSTALL_DIR}/elm.log"
-echo
-echo "Pair the GTach Pi against this host once; thereafter, GTach can connect on RFCOMM channel 1."
+${SUDO} bash "${INSTALL_DIR}/status-elm327-emulator.sh" || true
