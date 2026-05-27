@@ -25,9 +25,9 @@ RESET='\033[0m'
 
 overall=0
 
-pass()  { printf "  ${GREEN}[PASS]${RESET} %s\n" "$*"; }
-fail()  { printf "  ${RED}[FAIL]${RESET} %s\n" "$*"; overall=1; }
-warn()  { printf "  ${YELLOW}[WARN]${RESET} %s\n" "$*"; }
+pass()    { printf "  ${GREEN}[PASS]${RESET} %s\n" "$*"; }
+fail()    { printf "  ${RED}[FAIL]${RESET} %s\n" "$*"; overall=1; }
+warn()    { printf "  ${YELLOW}[WARN]${RESET} %s\n" "$*"; }
 section() { printf "\n%s\n%s\n" "$*" "$(printf '%.0s-' {1..50})"; }
 
 # ── 1. systemd services ───────────────────────────────────────────────────────
@@ -58,14 +58,14 @@ if hciconfig hci0 > /dev/null 2>&1; then
     else
         fail "hci0 is DOWN"
     fi
-    # Report adapter name
-    adapter_name=$(hciconfig hci0 name 2>/dev/null | awk -F"'" '{print $2}')
-    if [[ "${adapter_name}" == "${BT_NAME}" ]]; then
-        pass "Adapter name: '${adapter_name}'"
+    # Strip all whitespace from the reported name before comparing
+    adapter_name=$(hciconfig hci0 name 2>/dev/null | awk -F"'" '{print $2}' | tr -d '[:space:]')
+    bt_name_stripped=$(echo "${BT_NAME}" | tr -d '[:space:]')
+    if [[ "${adapter_name}" == "${bt_name_stripped}" ]]; then
+        pass "Adapter name: '${BT_NAME}'"
     else
         warn "Adapter name is '${adapter_name}'; expected '${BT_NAME}'"
     fi
-    # Report MAC address
     adapter_mac=$(hciconfig hci0 2>/dev/null | awk '/BD Address/{print $3}')
     if [[ -n "${adapter_mac}" ]]; then
         pass "Adapter MAC: ${adapter_mac}"
@@ -104,19 +104,12 @@ fi
 # ── 5. RFCOMM / Bluetooth socket ─────────────────────────────────────────────
 section "5. RFCOMM channel ${RFCOMM_CHANNEL}"
 
-# bt-server.py holds a socket on AF_BLUETOOTH; check via /proc/net if available
-if grep -qsE 'AF_BLUETOOTH|rfcomm' /proc/net/unix 2>/dev/null; then
-    pass "RFCOMM socket present in /proc/net/unix"
+if ss -x 2>/dev/null | grep -qi rfcomm; then
+    pass "RFCOMM socket visible via ss"
+elif [[ -n "${bt_pid}" ]]; then
+    warn "Cannot confirm RFCOMM socket directly; bt-server.py process is alive"
 else
-    # Fallback: check the process is alive (already done above) and the port
-    # is bound via ss
-    if ss -x 2>/dev/null | grep -qi rfcomm; then
-        pass "RFCOMM socket visible via ss"
-    elif [[ -n "${bt_pid}" ]]; then
-        warn "Cannot confirm RFCOMM socket directly; bt-server.py process is alive"
-    else
-        fail "RFCOMM socket not detectable and bt-server.py not running"
-    fi
+    fail "RFCOMM socket not detectable and bt-server.py not running"
 fi
 
 # ── 6. SDP record (informational) ────────────────────────────────────────────
