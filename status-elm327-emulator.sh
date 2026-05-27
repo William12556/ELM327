@@ -12,6 +12,10 @@
 # Run on the emulator Pi directly or via ssh:
 #   ssh root@ELM327-Emulator.local bash /opt/elm327/status-elm327-emulator.sh
 #
+# NOTE: TCP port 35000 is checked via ss (socket state), not by opening a
+# connection. The ircama ELM327 emulator terminates on bare connections that
+# send no data; a live probe would kill the emulator.
+#
 
 ELM_TCP_PORT=35000
 RFCOMM_CHANNEL=1
@@ -58,7 +62,6 @@ if hciconfig hci0 > /dev/null 2>&1; then
     else
         fail "hci0 is DOWN"
     fi
-    # Strip all whitespace from the reported name before comparing
     adapter_name=$(hciconfig hci0 name 2>/dev/null | awk -F"'" '{print $2}' | tr -d '[:space:]')
     bt_name_stripped=$(echo "${BT_NAME}" | tr -d '[:space:]')
     if [[ "${adapter_name}" == "${bt_name_stripped}" ]]; then
@@ -92,13 +95,14 @@ else
 fi
 
 # ── 4. TCP backend ────────────────────────────────────────────────────────────
+# Checked via ss (socket listener state) — not by opening a connection.
+# The ELM327 emulator terminates on bare connections that send no data.
 section "4. ELM327 TCP backend (port ${ELM_TCP_PORT})"
 
-if (exec 3<>"/dev/tcp/127.0.0.1/${ELM_TCP_PORT}") 2>/dev/null; then
-    exec 3<&- 3>&-
-    pass "TCP port ${ELM_TCP_PORT} accepting connections"
+if ss -tlnp 2>/dev/null | awk '{print $4}' | grep -q ":${ELM_TCP_PORT}$"; then
+    pass "TCP port ${ELM_TCP_PORT} is listening"
 else
-    fail "TCP port ${ELM_TCP_PORT} not responding"
+    fail "TCP port ${ELM_TCP_PORT} not listening (emulator may not be running)"
 fi
 
 # ── 5. RFCOMM / Bluetooth socket ─────────────────────────────────────────────

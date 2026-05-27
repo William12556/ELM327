@@ -1,109 +1,158 @@
 #!/bin/bash
+#
+# start-elm327-emulator-bt.sh
+#
+# Starts the ELM327 emulator with a Bluetooth SPP (RFCOMM) bridge on the Pi.
+# Suitable for both interactive use and systemd service execution.
+#
+# Architecture:
+#   GTach (RFCOMM)  <->  bt-server.py  <->  elm (TCP 35000)
+#
+# Usage (interactive):
+#   sudo bash /opt/elm327/start-elm327-emulator-bt.sh
+#
+# Usage (systemd):
+#   See /etc/systemd/system/elm327-emulator.service
+#
+# NOTE: TCP backend readiness is checked via ss (socket listener state),
+# not by opening a connection. The ircama ELM327 emulator terminates on
+# bare connections that send no data.
+#
 
-# =============================================================================
-# Usage
-# =============================================================================
-#
-# Starts the ELM327 emulator in Bluetooth SPP (RFCOMM) mode on the Raspberry Pi.
-# Use for Bluetooth SPP testing and Pi production environment validation.
-#
-# Prerequisites:
-#   - Run as root or with sudo
-#   - Bluetooth service must be available (bluetoothd)
-#   - python3-elm package must be installed
-#   - Client device must be paired after this script starts
-#
-# Steps:
-#   1. SSH into the Pi
-#   2. Run: sudo bash /opt/elm327/start-elm327-emulator-bt.sh
-#   3. Pair the client device via Bluetooth settings
-#   4. Start GTach on the Pi with --transport rfcomm
-#
-# Notes:
-#   - rfcomm watch runs in the foreground — use tmux to persist after SSH disconnect:
-#       tmux new -s elm327
-#       sudo bash /opt/elm327/start-elm327-emulator-bt.sh
-#   - SPP is registered on RFCOMM channel 1
-#   - Emulator logs written to /opt/elm327/elm.log
-#   - To stop: Ctrl+C
-#
-# =============================================================================
+INSTALL_DIR=/opt/elm327
+LOG_DIR="${INSTALL_DIR}"
+ELM_LOG="${LOG_DIR}/elm.log"
+ELM_LOG_CFG_PATH="${LOG_DIR}/elm.yaml"
+BT_NAME="ELM327-Emulator"
+RFCOMM_CHANNEL=1
+ELM_TCP_PORT=35000
+TCP_READY_TIMEOUT=30
 
-# Exit on error
-set -e
+export ELM_LOG_CFG="${ELM_LOG_CFG_PATH}"
 
-export ELM_LOG_CFG=/opt/elm327/elm.yaml
+ELM_PID=""
+BT_PID=""
 
-cat > /opt/elm327/elm.yaml << 'EOL'
+log() { printf '[%(%Y-%m-%d %H:%M:%S)T] %s\n' -1 "$*"; }
+
+cleanup() {
+    log "Stopping services..."
+    if [[ -n "${BT_PID}" ]] && kill -0 "${BT_PID}" 2>/dev/null; then
+        kill -TERM "${BT_PID}" 2>/dev/null || true
+        wait "${BT_PID}" 2>/dev/null || true
+    fi
+    if [[ -n "${ELM_PID}" ]] && kill -0 "${ELM_PID}" 2>/dev/null; then
+        kill -TERM "${ELM_PID}" 2>/dev/null || true
+        wait "${ELM_PID}" 2>/dev/null || true
+    fi
+    pkill -f 'python3 -m elm' 2>/dev/null || true
+    pkill -f 'bt-server.py' 2>/dev/null || true
+    log "Stopped."
+}
+trap cleanup EXIT INT TERM
+
+if [[ $EUID -ne 0 ]]; then
+    log "ERROR: must run as root"
+    exit 1
+fi
+
+mkdir -p "${LOG_DIR}"
+
+# ELM327 emulator log configuration
+cat > "${ELM_LOG_CFG_PATH}" << 'EOL'
 version: 1
 disable_existing_loggers: False
-
 formatters:
-  compact:
-    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   spaced:
     format: '%(asctime)s  %(name)-10s %(funcName)-15s %(levelname)-8s %(message)s'
-
 handlers:
-    file:
-        class: logging.handlers.RotatingFileHandler
-        formatter: spaced
-        filename: /opt/elm327/elm.log
-        level: DEBUG
-        encoding: utf8
-        maxBytes: 1000000
-        backupCount: 2
-        mode: 'w'
-
-    console:
-        class: logging.StreamHandler
-        level: INFO
-        formatter: compact
-        stream: ext://sys.stdout
-
-root:
+  file:
+    class: logging.handlers.RotatingFileHandler
+    formatter: spaced
+    filename: /opt/elm327/elm.log
     level: DEBUG
-    handlers:
-        - console
-        - file
+    encoding: utf8
+    maxBytes: 1000000
+    backupCount: 2
+    mode: 'w'
+root:
+  level: DEBUG
+  handlers: [file]
 EOL
 
-# Ensure Bluetooth service is running
-echo "Restart Bluetooth service"
-sudo service bluetooth restart
-sleep 2
-
-# Set Bluetooth device name
-echo "Setting Bluetooth name..."
-sudo btmgmt name "ELM327-Emulator"
-sudo hciconfig hci0 name 'ELM327-Emulator'
-sleep 2
-
-# Release any existing RFCOMM connections
-echo "Release any existing rfcomm connections"
-sudo rfcomm release 0 2>/dev/null || true
-sleep 2
-
-# Ensure rfcomm device exists
-echo "Ensure rfcomm device exists"
-if [ ! -e /dev/rfcomm0 ]; then
-    sudo mknod -m 666 /dev/rfcomm0 c 216 0
-    sudo chown root:dialout /dev/rfcomm0
-fi
-sleep 2
-
-# Register Serial Port Profile on channel 1
-echo "Add the Serial Port Profile"
-sdptool add --channel=1 SP
-sleep 2
-
-# Make adapter discoverable and pairable
-echo "Setting adapter discoverable and pairable..."
-sudo btmgmt connectable on
-sudo btmgmt pairable on
-sudo btmgmt discov on
+# Stop any prior instances
+log "Cleaning up previous instances..."
+pkill -f 'python3 -m elm' 2>/dev/null || true
+pkill -f 'bt-server.py' 2>/dev/null || true
+rfcomm release 0 2>/dev/null || true
 sleep 1
 
-# Start emulator via rfcomm watch (foreground — spawns elm on each connection)
-echo "ELM327-emulator waiting for connections..."
-rfcomm watch /dev/rfcomm0 1 /opt/elm327/elm-start.sh
+# Ensure bluetooth service is running
+log "Ensuring bluetooth service is active..."
+if ! systemctl is-active --quiet bluetooth; then
+    systemctl start bluetooth || log "WARNING: failed to start bluetooth.service"
+    sleep 2
+fi
+
+# Verify adapter
+if ! hciconfig hci0 > /dev/null 2>&1; then
+    log "ERROR: hci0 not found; is the adapter present?"
+    exit 1
+fi
+hciconfig hci0 up 2>/dev/null || true
+
+# Configure adapter identity and visibility
+log "Configuring adapter (name=${BT_NAME})..."
+btmgmt name "${BT_NAME}" "${BT_NAME}" >/dev/null 2>&1 || true
+hciconfig hci0 name "${BT_NAME}" >/dev/null 2>&1 || true
+btmgmt power on       >/dev/null 2>&1 || true
+btmgmt connectable on >/dev/null 2>&1 || true
+btmgmt pairable on    >/dev/null 2>&1 || true
+btmgmt discov on      >/dev/null 2>&1 || true
+
+# Register SDP Serial Port Profile (non-fatal)
+if sdptool add --channel="${RFCOMM_CHANNEL}" SP >/dev/null 2>&1; then
+    log "SDP Serial Port Profile registered on channel ${RFCOMM_CHANNEL}"
+else
+    log "WARNING: sdptool failed; SDP record not advertised (non-fatal for GTach)"
+fi
+
+# Launch ELM327 emulator (TCP 35000)
+log "Starting ELM327 emulator on TCP port ${ELM_TCP_PORT}..."
+cd "${INSTALL_DIR}"
+python3 -m elm -s car -n "${ELM_TCP_PORT}" >/dev/null 2>&1 &
+ELM_PID=$!
+log "  ELM327 emulator PID: ${ELM_PID}"
+
+# Wait for TCP port to appear in ss listener table.
+# Do NOT use a live TCP connection probe: the ircama emulator terminates
+# on connections that send no data.
+log "Waiting for TCP backend to become ready (up to ${TCP_READY_TIMEOUT}s)..."
+ready=0
+for ((i = 0; i < TCP_READY_TIMEOUT; i++)); do
+    if ss -tlnp 2>/dev/null | awk '{print $4}' | grep -q ":${ELM_TCP_PORT}$"; then
+        ready=1
+        break
+    fi
+    if ! kill -0 "${ELM_PID}" 2>/dev/null; then
+        log "ERROR: ELM327 emulator exited prematurely. Check ${ELM_LOG}"
+        exit 1
+    fi
+    sleep 1
+done
+
+if [[ $ready -ne 1 ]]; then
+    log "ERROR: TCP backend not ready after ${TCP_READY_TIMEOUT}s"
+    exit 1
+fi
+log "TCP backend ready."
+
+# Launch Bluetooth bridge
+log "Starting Bluetooth bridge on RFCOMM channel ${RFCOMM_CHANNEL}..."
+log "GTach can now connect via Bluetooth."
+python3 "${INSTALL_DIR}/bt-server.py" &
+BT_PID=$!
+log "  bt-server.py PID: ${BT_PID}"
+
+# Wait on bt-server; cleanup trap fires on exit
+wait "${BT_PID}"
