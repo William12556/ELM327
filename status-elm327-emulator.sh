@@ -138,17 +138,19 @@ else
     warn "No paired devices; GTach will not be able to connect until pairing is completed"
 fi
 
-# ── 8. Log tail ───────────────────────────────────────────────────────────────
+# ── 8. Recent log activity ────────────────────────────────────────────────────
 section "8. Recent log activity"
 
-for logfile in "${INSTALL_DIR}/bt-server.log" "${INSTALL_DIR}/elm.log"; do
-    if [[ -f "${logfile}" ]]; then
-        printf "\n  --- last 5 lines of %s ---\n" "${logfile}"
-        tail -5 "${logfile}" | sed 's/^/    /'
-    else
-        warn "${logfile} not found (service may not have started yet)"
-    fi
-done
+printf "\n  --- last 10 lines: journalctl -u elm327-emulator ---\n"
+journalctl -u elm327-emulator -n 10 --no-pager 2>/dev/null | sed 's/^/    /' \
+    || warn "journalctl not available"
+
+if [[ -f "${INSTALL_DIR}/bt-server.log" ]]; then
+    printf "\n  --- last 5 lines of bt-server.log ---\n"
+    tail -5 "${INSTALL_DIR}/bt-server.log" | sed 's/^/    /'
+else
+    warn "bt-server.log not found"
+fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 printf "\n%s\n" "$(printf '%.0s=' {1..50})"

@@ -18,17 +18,16 @@
 # not by opening a connection. The ircama ELM327 emulator terminates on
 # bare connections that send no data.
 #
+# NOTE: ELM_LOG_CFG is intentionally not set. Applying a yaml log config
+# causes the emulator to self-terminate during log handler initialisation.
+# Emulator output is captured by systemd (journalctl -u elm327-emulator).
+#
 
 INSTALL_DIR=/opt/elm327
-LOG_DIR="${INSTALL_DIR}"
-ELM_LOG="${LOG_DIR}/elm.log"
-ELM_LOG_CFG_PATH="${LOG_DIR}/elm.yaml"
 BT_NAME="ELM327-Emulator"
 RFCOMM_CHANNEL=1
 ELM_TCP_PORT=35000
 TCP_READY_TIMEOUT=30
-
-export ELM_LOG_CFG="${ELM_LOG_CFG_PATH}"
 
 ELM_PID=""
 BT_PID=""
@@ -56,29 +55,7 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-mkdir -p "${LOG_DIR}"
-
-# ELM327 emulator log configuration
-cat > "${ELM_LOG_CFG_PATH}" << 'EOL'
-version: 1
-disable_existing_loggers: False
-formatters:
-  spaced:
-    format: '%(asctime)s  %(name)-10s %(funcName)-15s %(levelname)-8s %(message)s'
-handlers:
-  file:
-    class: logging.handlers.RotatingFileHandler
-    formatter: spaced
-    filename: /opt/elm327/elm.log
-    level: DEBUG
-    encoding: utf8
-    maxBytes: 1000000
-    backupCount: 2
-    mode: 'w'
-root:
-  level: DEBUG
-  handlers: [file]
-EOL
+mkdir -p "${INSTALL_DIR}"
 
 # Stop any prior instances
 log "Cleaning up previous instances..."
@@ -118,9 +95,10 @@ else
 fi
 
 # Launch ELM327 emulator (TCP 35000)
+# ELM_LOG_CFG is deliberately unset; see file header note.
 log "Starting ELM327 emulator on TCP port ${ELM_TCP_PORT}..."
 cd "${INSTALL_DIR}"
-python3 -m elm -s car -n "${ELM_TCP_PORT}" >/dev/null 2>&1 &
+python3 -m elm -s car -n "${ELM_TCP_PORT}" &
 ELM_PID=$!
 log "  ELM327 emulator PID: ${ELM_PID}"
 
@@ -135,7 +113,7 @@ for ((i = 0; i < TCP_READY_TIMEOUT; i++)); do
         break
     fi
     if ! kill -0 "${ELM_PID}" 2>/dev/null; then
-        log "ERROR: ELM327 emulator exited prematurely. Check ${ELM_LOG}"
+        log "ERROR: ELM327 emulator exited prematurely"
         exit 1
     fi
     sleep 1
