@@ -25,6 +25,11 @@ INSTALL_DIR=/opt/elm327
 SERVICE_NAME=elm327-emulator
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Pinned to last known working version.
+# v3.0.5 introduced dynamic ELM_PIDS generation that causes immediate
+# self-termination on startup with the 'car' scenario.
+ELM327_VERSION="v3.0.3"
+
 # Use sudo only if not already root
 if [[ $EUID -eq 0 ]]; then
     SUDO=""
@@ -65,9 +70,9 @@ echo "==> Installing python-OBD..."
 ${SUDO} python3 -m pip install --break-system-packages \
     git+https://github.com/brendan-w/python-OBD.git
 
-echo "==> Installing ELM327-emulator (no build isolation)..."
+echo "==> Installing ELM327-emulator ${ELM327_VERSION} (no build isolation)..."
 ${SUDO} python3 -m pip install --break-system-packages --no-build-isolation \
-    git+https://github.com/ircama/ELM327-emulator
+    "git+https://github.com/ircama/ELM327-emulator@${ELM327_VERSION}"
 
 echo "==> Installing runtime files to ${INSTALL_DIR}..."
 ${SUDO} mkdir -p "${INSTALL_DIR}"
@@ -96,5 +101,5 @@ ${SUDO} systemctl restart "${SERVICE_NAME}.service"
 echo
 echo "Installation complete."
 echo
-echo "Status:"
+sleep 3
 ${SUDO} bash "${INSTALL_DIR}/status-elm327-emulator.sh" || true
