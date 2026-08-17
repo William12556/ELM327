@@ -1,6 +1,6 @@
 # ELM327 Bluetooth Emulator Scripts
 
-Installation and runtime scripts for [ELM327-emulator](https://github.com/ircama/ELM327-emulator) an ELM327 OBD-II emulator that presents
+Linux installation and runtime scripts for [ELM327-emulator](https://github.com/ircama/ELM327-emulator) an ELM327 OBD-II emulator that presents
 itself over Bluetooth SPP (RFCOMM).
 
 ## Architecture
